@@ -1,0 +1,9 @@
+{
+  "name": "Vigil",
+  "description": "Vigil: Advanced AI surveillance for proactive threat identification. Intelligent monitoring for a safer environment.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "prompt": ""
+}
