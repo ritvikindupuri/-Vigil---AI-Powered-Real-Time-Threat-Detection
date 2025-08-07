@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { analyzeImageContent, analyzeVerbalContent } from './services/geminiService';
-import type { Alert, ImageAnalysisResult, Session } from './types';
-import LiveMonitoringView, { LiveMonitoringViewRef } from './components/LiveMonitoringView';
-import EventLog from './components/EventLog';
+import { analyzeImageContent, analyzeVerbalContent } from './geminiService';
+import { SoundAnalyzer } from './soundAnalyzer';
+import type { Alert, ImageAnalysisResult, Session, SoundAnalysisResult } from './types';
+import LiveMonitoringView, { LiveMonitoringViewRef } from './LiveMonitoringView';
+import EventLog from './EventLog';
 import Header from './components/Header';
 import HistoryModal from './components/HistoryModal';
 
@@ -26,6 +27,7 @@ function App() {
 
   const speechRecognition = useRef<any>(null);
   const monitoringViewRef = useRef<LiveMonitoringViewRef>(null);
+  const soundAnalyzerRef = useRef<SoundAnalyzer | null>(null);
   
   const isMonitoringRef = useRef(isMonitoring);
   const isProcessingImageRef = useRef(false);
@@ -111,6 +113,51 @@ function App() {
     };
   }, []);
 
+  const processSound = useCallback((result: SoundAnalysisResult) => {
+    const targetSounds = new Set(["Gunshot, gunfire", "Glass", "Shatter", "Yell", "Screaming"]);
+    const threshold = 0.6;
+
+    let highestScoreEvent = null;
+
+    for (const event of result) {
+      if (targetSounds.has(event.categoryName) && event.score > threshold) {
+        if (!highestScoreEvent || event.score > highestScoreEvent.score) {
+          highestScoreEvent = event;
+        }
+      }
+    }
+
+    if(highestScoreEvent) {
+      if (alerts.length > 0 && alerts[0].type === 'Sound' && alerts[0].title.includes(highestScoreEvent.categoryName)) {
+        return;
+      }
+
+      addAlert({
+        type: 'Sound',
+        title: `Sound Detected: ${highestScoreEvent.categoryName}`,
+        details: `A sound of "${highestScoreEvent.categoryName}" was detected with a confidence of ${(highestScoreEvent.score * 100).toFixed(0)}%.`
+      });
+    }
+  }, [addAlert, alerts]);
+
+  useEffect(() => {
+    const initializeSoundAnalyzer = async () => {
+        try {
+            soundAnalyzerRef.current = await SoundAnalyzer.create(processSound);
+        } catch (e) {
+            const errorMessage = e instanceof Error ? e.message : String(e);
+            console.error("Failed to create SoundAnalyzer", e);
+            setError("Could not initialize sound analyzer. " + errorMessage);
+        }
+    };
+
+    initializeSoundAnalyzer();
+
+    return () => {
+        soundAnalyzerRef.current?.stop();
+    };
+  }, [processSound]);
+
   const captureFrame = useCallback(() => {
     if (!isMonitoringRef.current) {
       if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
@@ -150,6 +197,19 @@ function App() {
                      addAlert({ type: 'Object', title: `Risky Object: ${obj.name} (${person.id})`, details: `Risk score: ${obj.riskScore}. Justification: ${obj.justification}` });
                 }
             }
+
+            if (person.expression) {
+                const isHighRiskExpression = person.expression.sentiment === 'Fearful' || person.expression.sentiment === 'Angry' || person.expression.sentiment === 'Sad';
+                const isHighRiskSituation = person.isAggressive || (person.heldObject && person.heldObject.riskScore > 60);
+
+                if (isHighRiskExpression && isHighRiskSituation) {
+                    addAlert({
+                        type: 'Expression',
+                        title: `High-Risk Situation: ${person.expression.sentiment} (${person.id})`,
+                        details: `Detected a ${person.expression.sentiment} expression in a high-risk situation. Aggression: ${person.isAggressive}, Held Object Risk: ${person.heldObject?.riskScore || 'N/A'}. Macro: "${person.expression.macroExpression}". Micro: "${person.expression.microExpression}".`
+                    });
+                }
+            }
         });
         
         // Recovery from backoff
@@ -185,8 +245,12 @@ function App() {
     setIsProcessing(p => ({ ...p, verbal: true }));
     try {
         const result = await analyzeVerbalContent(textToAnalyze);
-        if (result.isBullying || result.sentiment === 'Negative') {
-            const alertDetails = `"${textToAnalyze}" - Explanation: ${result.explanation}`;
+        if (result.isBullying || result.sentiment === 'Negative' || result.isSarcastic) {
+            let alertDetails = `"${textToAnalyze}" - Explanation: ${result.explanation}`;
+            if(result.isSarcastic) {
+                alertDetails += " (Note: Sarcasm detected)";
+            }
+
             const currentPeople = latestAnalysisRef.current?.people || [];
             const aggressivePeople = currentPeople.filter(p => p.isAggressive);
 
@@ -276,6 +340,7 @@ function App() {
     if (isMonitoring) {
         isMonitoringRef.current = false; // Set ref immediately
         if (speechRecognition.current) { speechRecognition.current.abort(); }
+            soundAnalyzerRef.current?.stop();
         monitoringViewRef.current?.stopCamera();
         if (animationFrameId.current) { cancelAnimationFrame(animationFrameId.current); animationFrameId.current = null; }
         if (imageLoopTimeoutId.current) clearTimeout(imageLoopTimeoutId.current);
@@ -296,6 +361,15 @@ function App() {
                 try { speechRecognition.current.start(); }
                 catch(err) { console.error("Could not start speech recognition", err); setError("Could not start speech recognition. Please check microphone permissions."); }
             } else { setError("Speech Recognition not initialized."); }
+
+            try {
+                await soundAnalyzerRef.current?.start();
+            } catch (err) {
+                const errorMessage = err instanceof Error ? err.message : String(err);
+                console.error("Could not start sound analysis", err);
+                setError("Could not start sound analysis. " + errorMessage);
+            }
+
             isMonitoringRef.current = true;
             setIsMonitoring(true);
             captureFrame();
@@ -309,6 +383,8 @@ function App() {
     const aggressionCount = alerts.filter(a => a.type === 'Aggression').length;
     const verbalCount = alerts.filter(a => a.type === 'Verbal').length;
     const objectCount = alerts.filter(a => a.type === 'Object').length;
+    const soundCount = alerts.filter(a => a.type === 'Sound').length;
+    const expressionCount = alerts.filter(a => a.type === 'Expression').length;
 
     const newSession: Session = {
       id: `session-${Date.now()}`,
@@ -318,6 +394,8 @@ function App() {
         aggression: aggressionCount,
         verbal: verbalCount,
         objects: objectCount,
+        sound: soundCount,
+        expression: expressionCount,
       }
     };
     

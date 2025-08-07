@@ -32,6 +32,27 @@ const heldObjectSchema = {
     required: ["name", "location", "riskScore", "justification"]
 };
 
+const expressionSchema = {
+    type: Type.OBJECT,
+    description: "Analysis of the person's facial expression.",
+    properties: {
+        sentiment: {
+            type: Type.STRING,
+            description: "The dominant emotion conveyed by the expression.",
+            enum: ['Angry', 'Disgusted', 'Fearful', 'Happy', 'Neutral', 'Sad', 'Surprised']
+        },
+        microExpression: {
+            type: Type.STRING,
+            description: "Description of any fleeting, subtle micro-expressions detected. If none, state 'No micro-expressions detected'."
+        },
+        macroExpression: {
+            type: Type.STRING,
+            description: "Description of the clear, obvious macro-expression. If none, state 'No macro-expressions detected'."
+        }
+    },
+    required: ["sentiment", "microExpression", "macroExpression"]
+};
+
 const imageAnalysisSchema = {
     type: Type.OBJECT,
     properties: {
@@ -49,8 +70,13 @@ const imageAnalysisSchema = {
                         ...heldObjectSchema,
                         nullable: true,
                     },
+                    expression: {
+                        ...expressionSchema,
+                        nullable: true,
+                        description: "The person's facial expression analysis. Null if no face is clearly visible."
+                    }
                 },
-                required: ["id", "location", "isAggressive", "aggressionAnalysis", "heldObject"],
+                required: ["id", "location", "isAggressive", "aggressionAnalysis", "heldObject", "expression"],
             }
         }
     },
@@ -74,8 +100,12 @@ const verbalAnalysisSchema = {
             type: Type.STRING,
             description: "A brief explanation for the classification."
         },
+        isSarcastic: {
+            type: Type.BOOLEAN,
+            description: "True if the text contains sarcasm."
+        }
     },
-    required: ["sentiment", "isBullying", "explanation"]
+    required: ["sentiment", "isBullying", "explanation", "isSarcastic"]
 };
 
 
@@ -109,6 +139,13 @@ Your SOLE function is to analyze this image for human threats. You MUST follow t
 **3. STRICT IGNORE POLICY:**
 - **IGNORE ALL BACKGROUND ITEMS:** Do not identify chairs, desks, monitors, wall art, windows, or any other static scenery.
 - **IGNORE BODY PARTS:** Do not identify hands, fists, or clothing as objects.
+
+**4. FACIAL EXPRESSION ANALYSIS (NEW):**
+- For each person, analyze their facial expression if it is clearly visible.
+- If a face is not clear, \`expression\` MUST be \`null\`.
+- \`sentiment\`: Classify the dominant emotion from the provided enum.
+- \`microExpression\`: Describe any subtle, rapid facial movements (e.g., "brief lip corner pull"). If none, state "No micro-expressions detected."
+- \`macroExpression\`: Describe the overt, sustained facial expression (e.g., "Eyes wide, mouth open in surprise"). If none, state "No macro-expressions detected."
 
 Failure to adhere to these rules, especially the IGNORE policy, is a critical failure. Respond ONLY in the provided JSON format.
 `
@@ -152,9 +189,9 @@ export const analyzeVerbalContent = async (text: string): Promise<VerbalAnalysis
     try {
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
-            contents: `Analyze the following text for sentiment and signs of verbal bullying: "${text}"`,
+            contents: `Analyze the following text for sentiment, signs of verbal bullying, and sarcasm: "${text}"`,
             config: {
-                systemInstruction: "You are a sentiment analysis expert specializing in identifying verbal harassment and bullying from short text snippets for a security system. Your primary goal is to flag potentially harmful communication.",
+                systemInstruction: "You are a sentiment analysis expert specializing in identifying verbal harassment, bullying, and sarcasm from short text snippets for a security system. Your primary goal is to flag potentially harmful communication, paying close attention to nuanced language like sarcasm.",
                 responseMimeType: 'application/json',
                 responseSchema: verbalAnalysisSchema,
             }

@@ -87,11 +87,15 @@ const LiveMonitoringView = forwardRef<LiveMonitoringViewRef, LiveMonitoringViewP
     const newAnnotations: Annotation[] = [];
     
     latestAnalysis.people.forEach((person: Person) => {
+        let personText = person.id;
+        if (person.expression) {
+            personText += ` (${person.expression.sentiment})`;
+        }
         // Always add a box for the person
         newAnnotations.push({
             id: person.id,
             location: person.location,
-            text: person.id,
+            text: personText,
             level: 'info'
         });
 
@@ -215,6 +219,7 @@ const LiveMonitoringView = forwardRef<LiveMonitoringViewRef, LiveMonitoringViewP
                              <div className="flex items-center gap-4">
                                 <StatusIndicator label="Image" isProcessing={isProcessing.image} />
                                 <StatusIndicator label="Verbal" isProcessing={isProcessing.verbal} />
+                                {isMonitoring && <StatusIndicator label="Sound" isProcessing={false} />}
                             </div>
                             <div className="flex items-center gap-2 overflow-hidden">
                                 <p className="text-slate-300 text-xs flex-shrink-0">Transcript:</p>
