@@ -5,7 +5,7 @@ import type { ImageAnalysisResult, Location, Person } from '../types';
 
 interface LiveMonitoringViewProps {
   isMonitoring: boolean;
-  isProcessing: { image: boolean; verbal: boolean };
+  isProcessing: { image: boolean; verbal: boolean; audio: boolean };
   latestTranscript: string;
   latestAnalysis: ImageAnalysisResult | null;
 }
@@ -215,6 +215,7 @@ const LiveMonitoringView = forwardRef<LiveMonitoringViewRef, LiveMonitoringViewP
                              <div className="flex items-center gap-4">
                                 <StatusIndicator label="Image" isProcessing={isProcessing.image} />
                                 <StatusIndicator label="Verbal" isProcessing={isProcessing.verbal} />
+                                <StatusIndicator label="Audio" isProcessing={isProcessing.audio} />
                             </div>
                             <div className="flex items-center gap-2 overflow-hidden">
                                 <p className="text-slate-300 text-xs flex-shrink-0">Transcript:</p>

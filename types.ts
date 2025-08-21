@@ -34,7 +34,7 @@ export interface VerbalAnalysisResult {
 export interface Alert {
   id: string;
   timestamp: string;
-  type: 'Aggression' | 'Verbal' | 'Object';
+  type: 'Aggression' | 'Verbal' | 'Object' | 'Audio';
   title: string;
   details: string;
 }

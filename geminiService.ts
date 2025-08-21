@@ -1,6 +1,21 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import type { ImageAnalysisResult, VerbalAnalysisResult } from '../types';
 
+// Standard error for API failures
+class ApiError extends Error {
+    constructor(message: string, public status?: number) {
+        super(message);
+        this.name = 'ApiError';
+    }
+}
+
+// --- Model Configuration ---
+// Using "latest" ensures we automatically get model updates.
+// Using Pro for high-accuracy tasks, Flash for speed/cost-sensitive ones.
+const GEMINI_PRO_MODEL = 'gemini-1.5-pro-latest';
+const GEMINI_FLASH_MODEL = 'gemini-1.5-flash-latest';
+
+
 if (!process.env.API_KEY) {
     throw new Error("API_KEY environment variable is not set");
 }
@@ -115,7 +130,7 @@ Failure to adhere to these rules, especially the IGNORE policy, is a critical fa
         };
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: GEMINI_PRO_MODEL, // Use the more powerful model for accuracy
             contents: { parts: [textPart, imagePart] },
             config: {
                 responseMimeType: 'application/json',
@@ -134,27 +149,65 @@ Failure to adhere to these rules, especially the IGNORE policy, is a critical fa
 
     } catch (error) {
         console.error("Error analyzing image content:", error);
-        if (error instanceof Error && error.message) {
+        if (error instanceof Error) {
             if (error.message.includes("RESOURCE_EXHAUSTED") || error.message.includes("429")) {
-                throw new Error("API rate limit exceeded. Analysis may be delayed.");
+                throw new ApiError("API rate limit exceeded. Analysis may be delayed.", 429);
             }
-            throw new Error(error.message);
+             // Catch safety-related blocks
+            if (error.message.includes("SAFETY")) {
+                throw new ApiError("Image analysis blocked for safety reasons.", 400);
+            }
+            throw new ApiError(error.message);
         }
-        throw new Error("Failed to analyze image. The AI model could not process the request.");
+        throw new ApiError("Failed to analyze image. The AI model could not process the request.", 500);
     }
 };
 
 
 export const analyzeVerbalContent = async (text: string): Promise<VerbalAnalysisResult> => {
     if (!text.trim()) {
-        throw new Error("Input text cannot be empty.");
+        // Return a neutral, non-bullying result for empty input
+        return {
+            sentiment: "Neutral",
+            isBullying: false,
+            explanation: "Input text was empty."
+        };
     }
+
+    // System instruction sets the persona and high-level goal for the AI.
+    const systemInstruction = `
+You are a highly advanced AI security analyst. Your task is to analyze transcribed audio for verbal threats, focusing on bullying, harassment, and aggression.
+You must classify the input and provide a clear, concise explanation for your decision.
+Your output MUST be in the specified JSON format.
+Prioritize safety: if there is any ambiguity, err on the side of caution and flag the content.
+`;
+
+    // The user-facing prompt (contents) provides the specific text to analyze.
+    const contents = `
+**VERBAL THREAT ANALYSIS DIRECTIVE**
+
+Analyze the following text for sentiment and signs of verbal bullying or harassment:
+"${text}"
+
+**Analysis Criteria:**
+- **Sentiment**: Classify as "Positive", "Neutral", or "Negative".
+- **isBullying**: Set to \`true\` if the text contains any of the following, otherwise \`false\`:
+    - Personal insults or name-calling.
+    - Threats of physical harm.
+    - Aggressive or intimidating language.
+    - Discriminatory remarks (racism, sexism, etc.).
+    - Malicious gossip or social exclusion.
+- **Explanation**: Briefly justify your "isBullying" classification. If \`false\`, state "No bullying detected."
+
+Adhere strictly to the JSON schema.
+`;
+
     try {
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: `Analyze the following text for sentiment and signs of verbal bullying: "${text}"`,
+            model: GEMINI_PRO_MODEL, // Using Pro for better nuance detection
+            contents: contents,
             config: {
-                systemInstruction: "You are a sentiment analysis expert specializing in identifying verbal harassment and bullying from short text snippets for a security system. Your primary goal is to flag potentially harmful communication.",
+                systemInstruction: systemInstruction,
                 responseMimeType: 'application/json',
                 responseSchema: verbalAnalysisSchema,
             }
@@ -165,12 +218,15 @@ export const analyzeVerbalContent = async (text: string): Promise<VerbalAnalysis
 
     } catch (error) {
         console.error("Error analyzing verbal content:", error);
-        if (error instanceof Error && error.message) {
+        if (error instanceof Error) {
             if (error.message.includes("RESOURCE_EXHAUSTED") || error.message.includes("429")) {
-               throw new Error("API rate limit exceeded. Analysis may be delayed.");
+               throw new ApiError("API rate limit exceeded. Analysis may be delayed.", 429);
            }
-           throw new Error(error.message);
+            if (error.message.includes("SAFETY")) {
+                throw new ApiError("Verbal analysis blocked for safety reasons.", 400);
+            }
+           throw new ApiError(error.message);
        }
-        throw new Error("Failed to analyze verbal content. The AI model could not process the request.");
+        throw new ApiError("Failed to analyze verbal content. The AI model could not process the request.", 500);
     }
 };

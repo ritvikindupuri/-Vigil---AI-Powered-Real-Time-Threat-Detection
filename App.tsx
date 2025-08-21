@@ -1,10 +1,11 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { analyzeImageContent, analyzeVerbalContent } from './services/geminiService';
+import { analyzeImageContent, analyzeVerbalContent } from './geminiService';
+import { audioService, AudioEvent } from './audioService';
 import type { Alert, ImageAnalysisResult, Session } from './types';
-import LiveMonitoringView, { LiveMonitoringViewRef } from './components/LiveMonitoringView';
-import EventLog from './components/EventLog';
-import Header from './components/Header';
-import HistoryModal from './components/HistoryModal';
+import LiveMonitoringView, { LiveMonitoringViewRef } from './LiveMonitoringView';
+import EventLog from './EventLog';
+import Header from './Header';
+import HistoryModal from './HistoryModal';
 
 // Web Speech API interface
 declare global {
@@ -19,7 +20,7 @@ function App() {
   const [history, setHistory] = useState<Session[]>([]);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [isMonitoring, setIsMonitoring] = useState<boolean>(false);
-  const [isProcessing, setIsProcessing] = useState({ image: false, verbal: false });
+  const [isProcessing, setIsProcessing] = useState({ image: false, verbal: false, audio: false });
   const [latestTranscript, setLatestTranscript] = useState('');
   const [latestAnalysis, setLatestAnalysis] = useState<ImageAnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +52,19 @@ function App() {
     ].slice(0, 100));
   }, []);
 
+  const handleAudioEvent = useCallback((event: AudioEvent) => {
+    setIsProcessing(p => ({ ...p, audio: true }));
+    console.log('Audio event received:', event);
+    if (event.className !== 'Silence' && event.className !== 'Speech') {
+        addAlert({
+            type: 'Audio',
+            title: `Sound Detected: ${event.className}`,
+            details: `A sound classified as "${event.className}" was detected with ${Math.round(event.score * 100)}% confidence.`
+        });
+    }
+     setTimeout(() => setIsProcessing(p => ({ ...p, audio: false })), 500);
+  }, [addAlert]);
+
   useEffect(() => {
     isMonitoringRef.current = isMonitoring;
   }, [isMonitoring]);
@@ -60,6 +74,13 @@ function App() {
   }, [latestAnalysis]);
 
   useEffect(() => {
+    // Initialize Audio Service
+    audioService.initialize(handleAudioEvent)
+        .catch(err => {
+            console.error("Failed to initialize audio service", err);
+            setError("Failed to initialize audio service. Sound detection may not work.");
+        });
+
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
       const recognition = new SpeechRecognition();
@@ -276,6 +297,7 @@ function App() {
     if (isMonitoring) {
         isMonitoringRef.current = false; // Set ref immediately
         if (speechRecognition.current) { speechRecognition.current.abort(); }
+        audioService.stop();
         monitoringViewRef.current?.stopCamera();
         if (animationFrameId.current) { cancelAnimationFrame(animationFrameId.current); animationFrameId.current = null; }
         if (imageLoopTimeoutId.current) clearTimeout(imageLoopTimeoutId.current);
@@ -293,8 +315,14 @@ function App() {
         const cameraReady = await monitoringViewRef.current?.startCamera();
         if (cameraReady) {
             if(speechRecognition.current) {
-                try { speechRecognition.current.start(); }
-                catch(err) { console.error("Could not start speech recognition", err); setError("Could not start speech recognition. Please check microphone permissions."); }
+                try {
+                    speechRecognition.current.start();
+                    audioService.start();
+                }
+                catch(err) {
+                    console.error("Could not start audio services", err);
+                    setError("Could not start audio services. Please check microphone permissions.");
+                }
             } else { setError("Speech Recognition not initialized."); }
             isMonitoringRef.current = true;
             setIsMonitoring(true);
